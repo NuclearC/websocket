@@ -18,3 +18,6 @@ ws.Connect("ws://127.0.0.1:443");
 ws.Run();
 
 ```
+
+#### Dependencies
+* libuv: https://github.com/libuv/libuv
