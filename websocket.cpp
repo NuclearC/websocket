@@ -1,6 +1,6 @@
 /*
     WebSocket v13 Implemented in C/C++ 
-    Version 0.0.18.1
+    Version 0.0.18.3
     Copyright (c) 2017-2018 NuclearC
 */
 
