@@ -3,21 +3,29 @@ WebSocket v13 implementation in C++
 
 #### Usage
 ```c++
-#include "ws.h"
-
+#include "websocket.hpp"
 ...
+    using namespace nc;
 
-nc::WebSocket ws;
+    loop = uv_default_loop();
 
-ws.on_open = [](nc::WebSocket* sender) {
-  sender->Send("hello world");
-}
+    websocket::WebSocketClient ws(loop);
 
-ws.Connect("ws://127.0.0.1:443");
+    ws.on_connection = [](websocket::WebSocket* ws, const websocket::HttpResponse* res) {
+        ws->send<char>({16, 0, 15, 0});
+        ws->send("echo hello");
 
-ws.Run();
+        res->end();
+    };
+
+    ws.connect("ws://localhost:1501");
 
 ```
 
 #### Dependencies
 * libuv: https://github.com/libuv/libuv
+* Binary Writer/Reader: https://github.com/NuclearC/binary-writer-reader
+* cppcodec: https://github.com/tplgy/cppcodec
+* http-parser: https://github.com/nodejs/http-parser
+* CxxUrl: https://github.com/chmike/CxxUrl/blob/master/url.cpp
+* OpenSSL
