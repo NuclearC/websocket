@@ -126,7 +126,7 @@ namespace nc {
             bufs[0].len = len;
 
             if (int res = uv_write(write_req, (uv_stream_t*)socket, bufs, 1, on_write)) {
-                throw std::exception("failed to write into socket");
+                throw WebSocketException("failed to write into socket");
             }
         }
 
@@ -140,7 +140,7 @@ namespace nc {
             sd_req->data = this;
 
             if (int res = uv_shutdown(sd_req, (uv_stream_t*)socket, on_shutdown)) {
-                throw std::exception("failed to shutdown the socket");
+                throw WebSocketException("failed to shutdown the socket");
             }
         }
 
@@ -156,15 +156,23 @@ namespace nc {
             write_uint8(dest, dest_len, 0x80 | opcode, off);
 
             if (payload_length < 126) {
-                write_uint8(dest, dest_len, mask == nullptr ? payload_length : payload_length | 0x80, off);
+                dest[off++] = mask == nullptr ? payload_length : payload_length | 0x80;
             }
             else if (payload_length < 65536) {
-                write_uint8(dest, dest_len, mask == nullptr ? 126 : 126 | 0x80, off);
-                write_uint16(dest, dest_len, payload_length, off);
+                dest[off++] = mask == nullptr ? 126 : 126 | 0x80;
+                dest[off++] = (payload_length >> 8) & 0xff;
+                dest[off++] = (payload_length) & 0xff;
             }
             else {
-                write_uint8(dest, dest_len, mask == nullptr ? 127 : 127 | 0x80, off);
-                write_uint64(dest, dest_len, payload_length, off);
+                dest[off++] = mask == nullptr ? 127 : 127 | 0x80;
+                dest[off++] = (payload_length >> 56) & 0xff;
+                dest[off++] = (payload_length >> 48) & 0xff;
+                dest[off++] = (payload_length >> 40) & 0xff;
+                dest[off++] = (payload_length >> 32) & 0xff;
+                dest[off++] = (payload_length >> 24) & 0xff;
+                dest[off++] = (payload_length >> 16) & 0xff;
+                dest[off++] = (payload_length >> 8) & 0xff;
+                dest[off++] = (payload_length) & 0xff;
             }
 
             if (mask) {
@@ -242,7 +250,7 @@ namespace nc {
             listener->data = this;
 
             if (int res = uv_tcp_init(loop, listener)) {
-                throw std::exception("failed to init the socket");
+                throw WebSocketException("failed to init the socket");
             }
 
             if (ipv6) {
@@ -250,7 +258,7 @@ namespace nc {
                 auto res = uv_ip6_addr(nullptr, port, &address);
 
                 if (int res = uv_tcp_bind(listener, (sockaddr*)&address, 0)) {
-                    throw std::exception("failed to bind the socket");
+                    throw WebSocketException("failed to bind the socket");
                 }
             }
             else {
@@ -258,12 +266,12 @@ namespace nc {
                 auto res = uv_ip4_addr(nullptr, port, &address);
 
                 if (int res = uv_tcp_bind(listener, (sockaddr*)&address, 0)) {
-                    throw std::exception("failed to bind the socket");
+                    throw WebSocketException("failed to bind the socket");
                 }
             }
 
             if (int res = uv_listen((uv_stream_t*)listener, 128, on_connection_callback)) {
-                throw std::exception("failed to listen");
+                throw WebSocketException("failed to listen");
             }
         }
 
@@ -273,7 +281,7 @@ namespace nc {
             auto sender = (WebSocketServer*)server->data;
 
             if (int res = uv_tcp_init(sender->loop, client)) {
-                throw std::exception("failed to init the socket");
+                throw WebSocketException("failed to init the socket");
             }
 
             auto result = uv_accept(server, (uv_stream_t*)client);
@@ -284,7 +292,7 @@ namespace nc {
             else {
                 client->data = new WebSocketServerNode(sender->loop, client, sender);
                 if (int res = uv_read_start((uv_stream_t*)client, on_alloc_callback, on_read_callback)) {
-                    throw std::exception("failed to start reading the socket");
+                    throw WebSocketException("failed to start reading the socket");
                 }
             }
         }
@@ -459,7 +467,7 @@ namespace nc {
                 if (_this->on_error)
                     _this->on_error(_this, uv_err_name(status), uv_strerror(status));
                 else
-                    throw std::exception("failed to shutdown the socket");
+                    throw WebSocketException("failed to shutdown the socket");
                 return;
             }
 
@@ -597,7 +605,7 @@ namespace nc {
                 socket->data = this;
 
                 if (int res = uv_tcp_init(loop, socket)) {
-                    throw std::exception("failed to init the socket");
+                    throw WebSocketException("failed to init the socket");
                 }
             }
 
@@ -615,7 +623,7 @@ namespace nc {
                 u.host().c_str(),
                 u.port().c_str(),
                 &hints)) {
-                throw std::exception("failed to call getaddrinfo");
+                throw WebSocketException("failed to call getaddrinfo");
             }
         }
 
@@ -632,7 +640,7 @@ namespace nc {
             if (int res = uv_tcp_connect(connect_req,
                 socket, addr->ai_addr, on_connect_end)) {
                 printf("connection error: %s\n", uv_strerror(res));
-                throw std::exception("failed to connect");
+                throw WebSocketException("failed to connect");
             }
         }
 
@@ -656,7 +664,7 @@ namespace nc {
                 if (_this->on_error)
                     _this->on_error(_this, uv_err_name(status), uv_strerror(status));
                 else
-                    throw std::exception("failed to getaddrinfo");
+                    throw WebSocketException("failed to getaddrinfo");
                 return;
             }
 
@@ -673,7 +681,7 @@ namespace nc {
                 if (_this->on_error)
                     _this->on_error(_this, uv_err_name(status), uv_strerror(status));
                 else
-                    throw std::exception("failed to connect");
+                    throw WebSocketException("failed to connect");
                 return;
             }
 
@@ -731,7 +739,7 @@ namespace nc {
 
             if (int res = uv_read_start((uv_stream_t*)socket,
                 on_alloc_callback, on_read_callback)) {
-                throw std::exception("failed to start reading");
+                throw WebSocketException("failed to start reading");
             }
         }
 } // namespace websocket

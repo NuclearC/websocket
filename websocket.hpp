@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <vector>
 #include <functional>
-#include <intrin.h>
+#include <cstring>
 
 #include <http_parser.h>
 #include <uv.h>
@@ -112,6 +112,18 @@ namespace nc {
             std::function<void()> end;
         };
 
+        class WebSocketException
+            : public std::exception
+        {
+        private:
+            std::string message;
+        public:
+            WebSocketException() 
+                : std::exception() {}
+            WebSocketException(std::string _What)
+                : message(_What), std::exception() {}
+        };
+
         class WebSocket {
         protected:
             uv_tcp_t* socket;
@@ -196,6 +208,8 @@ namespace nc {
             void on_tcp_connect();
             std::string path, host;
         };
+
+        class WebSocketServer;
 
         class WebSocketServerNode
             : public WebSocket {
