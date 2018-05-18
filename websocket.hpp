@@ -135,7 +135,7 @@ namespace nc {
             HttpResponse* parse_http_response(const char* str, ssize_t len);
             void send_http_response(std::string accept);
             void send_http_request(std::string path,
-                std::string host, const WebSocketHeaders& custom_headers);
+                std::string host, Url::Query& query, const WebSocketHeaders& custom_headers);
 
             static void on_write(uv_write_t* req, int status);
             static void on_shutdown(uv_shutdown_t* req, int status);
@@ -182,22 +182,45 @@ namespace nc {
             std::function<void(WebSocket*, char*, size_t, WebSocketOpcode)> on_message;
         };
 
+        class WebSocketProxy {
+            friend class WebSocketClient;
+
+        protected:
+            Url parsed_url;
+        public:
+            WebSocketProxy(std::string uri);
+            ~WebSocketProxy();
+
+            virtual void on_tcp_packet(char* packet, size_t len) = 0;
+            virtual void on_tcp_open() = 0;
+            virtual void on_tcp_close() = 0;
+            virtual bool handshake_done() = 0;
+        };
+
         class WebSocketClient
             : public WebSocket {
             friend class WebSocket;
+            friend class WebSocketProxy;
         public:
             WebSocketClient();
             WebSocketClient(uv_loop_t* loop, uv_tcp_t* socket = nullptr);
 
             void connect(std::string uri);
+            void connect(std::string uri, WebSocketProxy* proxy_);
             void connect(addrinfo* addr);
 
             std::function<void(WebSocket*, const HttpResponse*)> on_connection;
 
             WebSocketHeaders custom_headers;
         private:
+            WebSocketProxy * proxy;
+
+            Url::Query query_params;
+
             void on_response_end(HttpResponse* res);
             static void on_getaddrinfo_end(uv_getaddrinfo_t* req, int status,
+                addrinfo* res);
+            static void on_getaddrinfo_end_proxy(uv_getaddrinfo_t* req, int status,
                 addrinfo* res);
             static void on_connect_end(uv_connect_t* req, int status);
             static void on_alloc_callback(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf);
@@ -206,7 +229,7 @@ namespace nc {
             void on_tcp_close(int status);
 
             void on_tcp_connect();
-            std::string path, host;
+            std::string path, host, port;
         };
 
         class WebSocketServer;

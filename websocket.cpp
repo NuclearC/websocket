@@ -15,7 +15,7 @@ namespace nc {
                 return 0;
 
             if (frame.is_masked) {
-                xor_buffer(buf, frame.payload_length, frame.mask);
+                xor_buffer(buf + frame.frame_length, frame.payload_length, frame.mask);
             }
 
             if (on_message)
@@ -426,12 +426,27 @@ namespace nc {
         }
 
         void WebSocket::send_http_request(std::string path,
-            std::string host, const WebSocketHeaders& custom_headers)
+            std::string host, Url::Query& query, const WebSocketHeaders& custom_headers)
         {
-            if (path.empty())
-                path = "/";
+            std::string final_path = path;
+            if (query.size() > 0) {
+                final_path += "?";
+                for (int i = 0; i < query.size(); i++) {
+                    final_path += query[i].key();
+                    final_path += "=";
+                    final_path += query[i].val();
+                    if (query.size() - i > 1) {
+                        final_path += "&";
+                    }
+                }
+            }
+
+            if (final_path.empty()) {
+                final_path = "/";
+            }
+
             std::string request =
-                "GET " + path + " HTTP/1.1\r\n"
+                "GET " + final_path + " HTTP/1.1\r\n"
                 "Host: " + host + "\r\n"
                 "Connection: Upgrade\r\n"
                 "Upgrade: websocket\r\n"
@@ -584,12 +599,12 @@ namespace nc {
         }
 
         WebSocketClient::WebSocketClient()
-            : WebSocket(nullptr, nullptr)
+            : WebSocket(nullptr, nullptr), proxy(nullptr)
         {
         }
 
         WebSocketClient::WebSocketClient(uv_loop_t* loop, uv_tcp_t* socket)
-            : WebSocket(loop, socket)
+            : WebSocket(loop, socket), proxy(nullptr)
         {
             masking_key = rand() * 0xffffffff;
         }
@@ -599,6 +614,12 @@ namespace nc {
             Url u(uri);
             host = u.host();
             path = u.path();
+            port = u.port();
+
+            if (port.empty())
+                port = "80";
+
+            query_params = u.query();
 
             if (!socket) {
                 socket = new uv_tcp_t{};
@@ -617,14 +638,32 @@ namespace nc {
             hints.ai_socktype = SOCK_STREAM;
             hints.ai_family = u.ip_version() == 6 ? AF_INET6 : AF_INET;
 
-            if (int res = uv_getaddrinfo(loop,
-                getaddrinfo_req,
-                on_getaddrinfo_end,
-                u.host().c_str(),
-                u.port().c_str(),
-                &hints)) {
-                throw WebSocketException("failed to call getaddrinfo");
+            if (proxy == nullptr) {
+                if (int res = uv_getaddrinfo(loop,
+                    getaddrinfo_req,
+                    on_getaddrinfo_end,
+                    host.c_str(),
+                    port.c_str(),
+                    &hints)) {
+                    throw WebSocketException("failed to call getaddrinfo");
+                }
             }
+            else {
+                if (int res = uv_getaddrinfo(loop,
+                    getaddrinfo_req,
+                    on_getaddrinfo_end_proxy,
+                    proxy->parsed_url.host().c_str(),
+                    proxy->parsed_url.port().c_str(),
+                    &hints)) {
+                    throw WebSocketException("failed to call getaddrinfo");
+                }
+            }
+        }
+
+        void WebSocketClient::connect(std::string uri, WebSocketProxy * proxy_)
+        {
+            proxy = proxy_;
+            connect(uri);
         }
 
         void WebSocketClient::connect(addrinfo * addr)
@@ -671,6 +710,24 @@ namespace nc {
             _this->connect(res);
         }
 
+        void WebSocketClient::on_getaddrinfo_end_proxy(uv_getaddrinfo_t * req,
+            int status, addrinfo * res)
+        {
+            auto _this = (WebSocketClient*)req->data;
+            delete req;
+
+            if (status) {
+                _this->state = WebSocketState::kClosed;
+                if (_this->on_error)
+                    _this->on_error(_this, uv_err_name(status), uv_strerror(status));
+                else
+                    throw WebSocketException("failed to getaddrinfo (proxy)");
+                return;
+            }
+
+            _this->connect(res);
+        }
+
         void WebSocketClient::on_connect_end(uv_connect_t * req, int status)
         {
             auto _this = (WebSocketClient*)req->data;
@@ -711,36 +768,57 @@ namespace nc {
 
         void WebSocketClient::on_tcp_packet(char * packet, ssize_t len)
         {
-            if (http_handshake_done) {
-                handle_packet(packet, len);
+            if ((proxy ? proxy->handshake_done() : true)) {
+                if (http_handshake_done) {
+                    handle_packet(packet, len);
+                }
+                else {
+                    auto res = parse_http_response(packet, len);
+                    if (res->res) {
+                        res->end = std::bind(&WebSocketClient::on_response_end, this, res);
+                        if (res->res < len) {
+                            enque_fragment(packet + res->res, len - res->res);
+                        }
+
+                        if (on_connection)
+                            on_connection(this, res);
+                    }
+                }
             }
             else {
-                auto res = parse_http_response(packet, len);
-                if (res->res) {
-                    res->end = std::bind(&WebSocketClient::on_response_end, this, res);
-                    if (res->res < len) {
-                        enque_fragment(packet + res->res, len - res->res);
-                    }
-
-                    if (on_connection)
-                        on_connection(this, res);
-                }
+                proxy->on_tcp_packet(packet, len);
             }
         }
 
         void WebSocketClient::on_tcp_close(int status)
         {
+            if (proxy != nullptr)
+                proxy->on_tcp_close();
             close();
         }
 
         void WebSocketClient::on_tcp_connect()
         {
-            send_http_request(path, host, custom_headers);
+            if (proxy != nullptr) {
+                proxy->on_tcp_open();
+            }
+            else {
+                send_http_request(path, host, query_params, custom_headers);
+            }
 
             if (int res = uv_read_start((uv_stream_t*)socket,
                 on_alloc_callback, on_read_callback)) {
                 throw WebSocketException("failed to start reading");
             }
+        }
+
+        WebSocketProxy::~WebSocketProxy()
+        {
+        }
+
+        WebSocketProxy::WebSocketProxy(std::string uri)
+        {
+            parsed_url = Url(uri);
         }
 } // namespace websocket
 } // namespace nc
